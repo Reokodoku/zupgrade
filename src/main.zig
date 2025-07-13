@@ -137,6 +137,8 @@ pub fn main() !void {
                 std.debug.print(use.HELP_MESSAGE, .{})
             else
                 try use.execute(gpa, &positionals);
+        } else {
+            usage(args.executable_name);
         }
     } else {
         usage(args.executable_name);

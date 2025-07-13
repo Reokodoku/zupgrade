@@ -1,0 +1,24 @@
+.{
+    .fingerprint = 0x72b8f9559e923209,
+    .name = .zupgrade,
+    .version = "0.1.0",
+    .minimum_zig_version = "0.14.1",
+
+    .dependencies = .{
+        .@"known-folders" = .{
+            .url = "git+https://github.com/ziglibs/known-folders#aa24df42183ad415d10bc0a33e6238c437fc0f59",
+            .hash = "known_folders-0.0.0-Fy-PJtLDAADGDOwYwMkVydMSTp_aN-nfjCZw6qPQ2ECL",
+        },
+        .sap = .{
+            .url = "git+https://github.com/Reokodoku/sap#1bf7f3b058523e01ff121de69c082fecf984a190",
+            .hash = "sap-0.1.2-rWTgs4U8AACJ3diAe-S7pyL6DKLQqy1-Y3b7aRnpasUh",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+
+        "LICENSE",
+    },
+}

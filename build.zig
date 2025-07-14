@@ -17,6 +17,9 @@ pub fn build(b: *std.Build) void {
     const known_folders = b.dependency("known-folders", .{});
     exe.root_module.addImport("known-folders", known_folders.module("known-folders"));
 
+    const minizign = b.dependency("minizign", .{});
+    exe.root_module.addImport("minizign", minizign.module("minizign"));
+
     b.installArtifact(exe);
 
     const run_cmd = b.addRunArtifact(exe);

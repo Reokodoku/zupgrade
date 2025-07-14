@@ -3,50 +3,31 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Sha256 = std.crypto.hash.sha2.Sha256;
 
+const minizign = @import("minizign");
+
 const fatal = @import("root").fatal;
 
 pub const Error = error{
+    SignatureVerificationFailed,
     DecompressionFailed,
+    ChecksumFailed,
 };
 
-const WRITE_BUFFER_SIZE = std.heap.pageSize() * 4;
+/// This includes the "checksum" step.
+pub const DECOMPRESS_PROG_NODE_STEPS = 4;
+
+const ZIG_PUBLIC_KEY = minizign.PublicKey.decodeFromBase64("RWSGOq2NVecA2UPNdBUZykf1CCb147pkmdtYxgb3Ti+JO/wCYvhbAb/U") catch unreachable;
+
 pub const TARBALL_EXT: enum { zip, @"tar.xz" } = if (builtin.os.tag == .windows)
     .zip
 else
     .@"tar.xz";
 
-pub var prog_node: std.Progress.Node = undefined;
 const Self = @This();
 
 /// The link to the tarball
 tarball: []const u8,
 shasum: []const u8,
-
-/// Decompress the tarball into the specified directory
-pub fn decompressWithReader(gpa: Allocator, dir: std.fs.Dir, reader: anytype) !void {
-    const node = prog_node.start("Decompressing", 0);
-    defer node.end();
-
-    switch (TARBALL_EXT) {
-        .zip => std.zip.extract(dir, reader, .{}) catch return Error.DecompressionFailed,
-        .@"tar.xz" => {
-            var buffered_reader = std.io.bufferedReaderSize(std.crypto.tls.max_ciphertext_record_len, reader);
-            var decompressor = std.compress.xz.decompress(gpa, buffered_reader.reader()) catch return Error.DecompressionFailed;
-            defer decompressor.deinit();
-            std.tar.pipeToFileSystem(dir, decompressor.reader(), .{}) catch return Error.DecompressionFailed;
-        },
-    }
-}
-
-/// Decompress the tarball into the specified directory
-pub fn decompress(gpa: Allocator, dir: std.fs.Dir, file: std.fs.File) !void {
-    const reader = switch (TARBALL_EXT) {
-        .zip => file.seekableStream(),
-        .@"tar.xz" => file.reader(),
-    };
-
-    try Self.decompressWithReader(gpa, dir, reader);
-}
 
 pub fn getFileName(self: Self) []const u8 {
     var split = std.mem.splitBackwardsScalar(u8, self.tarball, '/');
@@ -67,105 +48,66 @@ pub fn getVersion(self: Self, os_info: []const u8) []const u8 {
     return std.mem.trimRight(u8, t3, "." ++ @tagName(TARBALL_EXT));
 }
 
-/// Write to disk the tarball and calculate the hash.
-pub fn writeToDiskHash(
-    self: Self,
-    dir: std.fs.Dir,
-    data_reader: anytype,
-    hash: *[Sha256.digest_length]u8,
-) !std.fs.File {
-    const node = prog_node.start("Saving tarball to disk", 0);
-    defer node.end();
-
+/// Decompress the tarball into the specified directory and verifies the signature and (if specified) the hash.
+pub fn decompress(self: Self, gpa: Allocator, prog_node: std.Progress.Node, dest_dir: std.fs.Dir, reader: anytype, signature: minizign.Signature, hash: ?*[Sha256.digest_length]u8) !void {
     var hasher = Sha256.init(.{});
+    var verifier = try ZIG_PUBLIC_KEY.verifier(&signature);
 
-    const file = try dir.createFile(self.getFileName(), .{ .read = true });
+    const file = try dest_dir.createFile(self.getFileName(), .{ .read = true });
+    defer file.close();
+    defer dest_dir.deleteFile(self.getFileName()) catch @panic("Unable to delete the tarball");
     var file_writer = file.writer();
 
-    var buffer: [WRITE_BUFFER_SIZE]u8 = undefined;
+    {
+        const cur_pnode = prog_node.start("Writing to file", 0);
+        defer cur_pnode.end();
 
-    while (true) {
-        const bytes = try data_reader.read(&buffer);
-        if (bytes == 0)
-            break; // end of stream
+        var buffer: [std.heap.page_size_max]u8 = undefined;
+        while (true) {
+            const bytes = try reader.read(&buffer);
+            if (bytes == 0)
+                break; // end of stream
 
-        try file_writer.writeAll(buffer[0..bytes]);
-        hasher.update(buffer[0..bytes]);
+            try file_writer.writeAll(buffer[0..bytes]);
+            if (hash != null)
+                hasher.update(buffer[0..bytes]);
+            verifier.update(buffer[0..bytes]);
+        }
     }
+
+    if (hash) |h| {
+        const cur_pnode = prog_node.start("Verifying hash", 0);
+        defer cur_pnode.end();
+
+        hasher.final(h);
+
+        const fmt_hash = try std.fmt.allocPrint(gpa, "{s}", .{std.fmt.fmtSliceHexLower(h)});
+        defer gpa.free(fmt_hash);
+
+        if (!std.mem.eql(u8, self.shasum, fmt_hash))
+            return Error.ChecksumFailed;
+    }
+
+    {
+        const cur_pnode = prog_node.start("Verifying signature", 0);
+        defer cur_pnode.end();
+
+        verifier.verify(gpa) catch return Error.SignatureVerificationFailed;
+    }
+
     try file.seekTo(0);
+    {
+        const cur_pnode = prog_node.start("Decompressing", 0);
+        defer cur_pnode.end();
 
-    hasher.final(hash);
-
-    return file;
-}
-
-pub fn writeToDisk(self: Self, dir: std.fs.Dir, data_reader: anytype) !std.fs.File {
-    const node = prog_node.start("Saving tarball to disk", 0);
-    defer node.end();
-
-    const file = try dir.createFile(self.getFileName(), .{ .read = true });
-    var file_writer = file.writer();
-
-    var buffer: [WRITE_BUFFER_SIZE]u8 = undefined;
-
-    while (true) {
-        const bytes = try data_reader.read(&buffer);
-        if (bytes == 0)
-            break; // end of stream
-
-        try file_writer.writeAll(buffer[0..bytes]);
+        switch (TARBALL_EXT) {
+            .zip => std.zip.extract(dest_dir, file.seekableStream(), .{}) catch return Error.DecompressionFailed,
+            .@"tar.xz" => {
+                var buffered_reader = std.io.bufferedReaderSize(std.crypto.tls.max_ciphertext_record_len, file.reader());
+                var decompressor = std.compress.xz.decompress(gpa, buffered_reader.reader()) catch return Error.DecompressionFailed;
+                defer decompressor.deinit();
+                std.tar.pipeToFileSystem(dest_dir, decompressor.reader(), .{}) catch return Error.DecompressionFailed;
+            },
+        }
     }
-    try file.seekTo(0);
-
-    return file;
-}
-
-/// Writes the tarball to disk, decompresses it and deletes it. Also, this function checks if the hash
-/// is the same as the one in the `shasum` field.
-pub fn writeDecompressToDiskHashCheck(
-    self: Self,
-    gpa: Allocator,
-    dir: std.fs.Dir,
-    data_reader: anytype,
-) !void {
-    var hash: [Sha256.digest_length]u8 = undefined;
-
-    const file = try self.writeToDiskHash(dir, data_reader, &hash);
-    defer file.close();
-
-    const fmt_hash = try std.fmt.allocPrint(gpa, "{s}", .{std.fmt.fmtSliceHexLower(&hash)});
-    defer gpa.free(fmt_hash);
-
-    if (!std.mem.eql(u8, self.shasum, fmt_hash)) {
-        try dir.deleteFile(self.getFileName());
-
-        fatal(
-            \\Tarball hashes are not the same!
-            \\Expected hash: {s}
-            \\Obtained hash: {s}
-            \\
-        , .{
-            self.shasum,
-            fmt_hash,
-        }, null) catch {};
-    }
-
-    try Self.decompress(gpa, dir, file);
-
-    try dir.deleteFile(self.getFileName());
-}
-
-/// Writes the tarball to disk, decompresses it and deletes it.
-pub fn writeDecompressToDisk(
-    self: Self,
-    gpa: Allocator,
-    dir: std.fs.Dir,
-    data_reader: anytype,
-) !void {
-    const file = try self.writeToDisk(dir, data_reader);
-    defer file.close();
-
-    try Self.decompress(gpa, dir, file);
-
-    try dir.deleteFile(self.getFileName());
 }

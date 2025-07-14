@@ -37,8 +37,6 @@ fn usage(exe_name: []const u8) noreturn {
         \\  use, switch     Switch the current version of zig
         \\
         \\Options:
-        \\  --always-internet
-        \\  --no-internet
         \\  --help              Display this help message
         \\  --version           Display the version of the program
         \\

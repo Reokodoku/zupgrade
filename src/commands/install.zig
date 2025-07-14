@@ -3,8 +3,11 @@ const std = @import("std");
 const eql = std.mem.eql;
 const allocPrint = std.fmt.allocPrint;
 const Allocator = std.mem.Allocator;
+const Sha256 = std.crypto.hash.sha2.Sha256;
 
 const Positionals = @import("sap").Positionals;
+
+const minizign = @import("minizign");
 
 const root = @import("root");
 const fatal = root.fatal;
@@ -16,45 +19,74 @@ const ZigVersion = @import("../ZigVersion.zig");
 var prog_node: std.Progress.Node = undefined;
 var is_nightly_build = false;
 
-fn downloadZig(gpa: Allocator, zig_ver: ZigVersion) !void {
-    const tarball_req_node = prog_node.start("Sending the request to get the tarball", 0);
-    var server_header_buffer: [1024]u8 = undefined;
-    var req = try root.http_client.open(.GET, try std.Uri.parse(zig_ver.tarball), .{
+var server_header_buffer: [1024]u8 = undefined;
+fn sendGetReq(url: []const u8) !std.http.Client.Request {
+    var req = try root.http_client.open(.GET, try std.Uri.parse(url), .{
         .server_header_buffer = &server_header_buffer,
         .keep_alive = false,
     });
-    defer req.deinit();
 
-    req.send() catch |e| fatal("Failed to send HTTP request to {s}", .{zig_ver.tarball}, e);
+    req.send() catch |e| fatal("Failed to send HTTP request to {s}", .{url}, e);
     req.wait() catch |e| fatal("Failed to receive a response from the server", .{}, e);
-    tarball_req_node.end();
 
     if (req.response.status != .ok) {
-        if (!is_nightly_build)
-            fatal("Received status code {d}", .{req.response.status}, null);
-
-        fatal(
-            \\Received status code {d}.
-            \\Are you sure that this nightly build exist?
-        , .{@intFromEnum(req.response.status)}, null);
+        if (is_nightly_build)
+            fatal(
+                \\Failed to send HTTP request: received status code {d}
+                \\Are you sure that this nightly build exist?
+                \\Maybe is's no longer present.
+            , .{@intFromEnum(req.response.status)}, null)
+        else
+            fatal("Failed to send HTTP request: received status code {d}", .{@intFromEnum(req.response.status)}, null);
     }
 
-    const req_reader = req.reader();
+    return req;
+}
 
-    if (is_nightly_build or !root.data_dir.config.check_hash) {
-        _ = switch (ZigVersion.TARBALL_EXT) {
-            .zip => zig_ver.writeDecompressToDisk(gpa, root.data_dir.zig_dir, req_reader),
-            .@"tar.xz" => ZigVersion.decompressWithReader(gpa, root.data_dir.zig_dir, req_reader),
-        } catch |e| switch (e) {
-            error.DecompressionFailed => fatal("Failed to decompress the tarball", .{}, null),
-            else => return e,
-        };
-    } else {
-        zig_ver.writeDecompressToDiskHashCheck(gpa, root.data_dir.zig_dir, req_reader) catch |e| switch (e) {
-            error.DecompressionFailed => fatal("Failed to decompress the tarball", .{}, null),
-            else => return e,
-        };
+fn downloadZig(gpa: Allocator, zig_ver: ZigVersion) !void {
+    var sign: minizign.Signature = undefined;
+
+    {
+        const get_signature_node = prog_node.start("Getting signature", 0);
+        defer get_signature_node.end();
+
+        const minisign_url = try allocPrint(gpa, "{s}.minisig", .{zig_ver.tarball});
+        defer gpa.free(minisign_url);
+
+        var req = try sendGetReq(minisign_url);
+        defer req.deinit();
+
+        const sign_data = try req.reader().readAllAlloc(gpa, std.heap.page_size_max * 4);
+        defer gpa.free(sign_data);
+
+        sign = try minizign.Signature.decode(gpa, sign_data);
     }
+    defer sign.deinit();
+
+    const tarball_req_node = prog_node.start("Sending the request to get the tarball", 0);
+    var req = try sendGetReq(zig_ver.tarball);
+    defer req.deinit();
+    tarball_req_node.end();
+
+    var hash: [Sha256.digest_length]u8 = undefined;
+    zig_ver.decompress(gpa, prog_node, root.data_dir.zig_dir, req.reader(), sign, if (is_nightly_build or !root.data_dir.config.check_hash) null else &hash) catch |e| switch (e) {
+        ZigVersion.Error.SignatureVerificationFailed => fatal("Failed to verify the signature", .{}, null),
+        ZigVersion.Error.DecompressionFailed => fatal("Failed to decompress the tarball", .{}, null),
+        ZigVersion.Error.ChecksumFailed => {
+            const fmt_hash = try allocPrint(gpa, "{s}", .{std.fmt.fmtSliceHexLower(&hash)});
+            defer gpa.free(fmt_hash);
+
+            fatal(
+                \\Tarball hashes are not the same!
+                \\Expected hash: {s}
+                \\Obtained hash: {s}
+            , .{
+                zig_ver.shasum,
+                fmt_hash,
+            }, null);
+        },
+        else => return e,
+    };
 }
 
 fn getZigVersion(
@@ -87,8 +119,8 @@ fn getZigVersion(
         is_nightly_build = true;
         return .{
             .tarball = try allocPrint(gpa, "https://ziglang.org/builds/zig-{s}-{s}-{s}.{s}", .{
-                @tagName(builtin.os.tag),
                 root.ARCH_NAME,
+                @tagName(builtin.os.tag),
                 version,
                 @tagName(ZigVersion.TARBALL_EXT),
             }),
@@ -118,33 +150,24 @@ pub fn execute(gpa: Allocator, positionals: *Positionals.Iterator) !void {
         try allocPrint(gpa, "Installing zig-{s}-{s}", .{ os_info, user_version });
     defer gpa.free(main_prog_node_name);
 
-    // getZigDownloadPage node + `tarball_req_node` + decompress tarball = 3
-    const estimated_total_items = if (ZigVersion.TARBALL_EXT == .zip)
-        // With `zip`s we need to save the file, so one more step
-        4
-    else
-        3;
-
     prog_node = std.Progress.start(.{
         .root_name = main_prog_node_name,
-        .estimated_total_items = estimated_total_items,
+        // `getMirrorIndex` + `get_signature_node` + `tarball_req_node` + `ZigVersion.decompress` (- "checksum" step)
+        .estimated_total_items = 3 + (ZigVersion.DECOMPRESS_PROG_NODE_STEPS - 1),
     });
     defer prog_node.end();
 
     const zig_ver = try getZigVersion(gpa, try root.getMirrorIndex(gpa, prog_node), user_version, os_info);
     defer if (is_nightly_build) gpa.free(zig_ver.tarball);
 
-    ZigVersion.prog_node = prog_node;
+    // Add the "checksum" step if it's needed
+    if (!is_nightly_build and root.data_dir.config.check_hash)
+        prog_node.increaseEstimatedTotalItems(1);
+
     var tarball_dir_name = zig_ver.getFileName();
     tarball_dir_name = tarball_dir_name[0 .. tarball_dir_name.len - 1 - @tagName(ZigVersion.TARBALL_EXT).len];
     if (root.data_dir.zig_dir.statFile(tarball_dir_name) != error.FileNotFound)
         fatal("This version already exist", .{}, null);
-
-    // If we want to calculate the hash we need to save the file, so an extra step **IF**
-    // the tarball isn't a zip. `zip`s always need to save the file and we have already
-    // increased the `estimated_total_items' variable by one for this.
-    if (!root.data_dir.config.check_hash or (zig_ver.shasum.len != 0 and ZigVersion.TARBALL_EXT == .@"tar.xz"))
-        prog_node.increaseEstimatedTotalItems(1);
 
     try downloadZig(gpa, zig_ver);
 

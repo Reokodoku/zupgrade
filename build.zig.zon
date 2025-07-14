@@ -13,6 +13,10 @@
             .url = "git+https://github.com/Reokodoku/sap#1bf7f3b058523e01ff121de69c082fecf984a190",
             .hash = "sap-0.1.2-rWTgs4U8AACJ3diAe-S7pyL6DKLQqy1-Y3b7aRnpasUh",
         },
+        .minizign = .{
+            .url = "git+https://github.com/jedisct1/zig-minisign#4030f154ba0cd29910bec4e809955e730d8f0ed7",
+            .hash = "minizign-0.1.6-gg18cfnZAQA1H3RszTLT98sFBL8p6wq1Zq_5ruwp9QPx",
+        },
     },
     .paths = .{
         "build.zig",

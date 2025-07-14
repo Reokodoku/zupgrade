@@ -33,7 +33,7 @@ fn usage(exe_name: []const u8) noreturn {
         \\Commands:
         \\  list, ls        List all downloaded versions of zig
         \\  install, i      Download a version of zig
-        \\  uninstall       Uninstall a version of zig
+        \\  uninstall, rm   Uninstall a version of zig
         \\  use, switch     Switch the current version of zig
         \\
         \\Options:
@@ -120,7 +120,7 @@ pub fn main() !void {
                 std.debug.print(install.HELP_MESSAGE, .{})
             else
                 try install.execute(gpa, &positionals);
-        } else if (eql(u8, c, "uninstall")) {
+        } else if (eql(u8, c, "uninstall") or eql(u8, c, "rm")) {
             if (args.help)
                 std.debug.print(uninstall.HELP_MESSAGE, .{})
             else

@@ -5,7 +5,8 @@ const Sha256 = std.crypto.hash.sha2.Sha256;
 
 const minizign = @import("minizign");
 
-const fatal = @import("root").fatal;
+const root = @import("root");
+const fatal = root.fatal;
 
 pub const Error = error{
     SignatureVerificationFailed,
@@ -34,18 +35,22 @@ pub fn getFileName(self: Self) []const u8 {
     return split.next().?;
 }
 
-pub fn getVersion(self: Self, os_info: []const u8) []const u8 {
-    // The URL is in format `https://ziglang.org/**/zig-{OS_INFO}-{VERSION}.{EXT}`,
+pub fn getVersion(self: Self) []const u8 {
+    // The URL is in format `https://ziglang.org/**/zig-{arch}-{os}-{VERSION}.{EXT}`,
     // so we take the file name and then we need to trim the extension and the
-    // `zig-{OS_INFO}-`.
+    // `zig-{arch}-{os}-`.
 
-    const file_name = self.getFileName();
+    var split = std.mem.splitScalar(u8, self.getFileName(), '-');
+    _ = split.next(); // zig
+    _ = split.next(); // arch
+    _ = split.next(); // os
 
-    const t1 = std.mem.trimLeft(u8, file_name, "zig-");
-    const t2 = std.mem.trimLeft(u8, t1, os_info);
-    const t3 = std.mem.trimLeft(u8, t2, "-");
+    return std.mem.trimRight(u8, split.rest(), "." ++ @tagName(TARBALL_EXT));
+}
 
-    return std.mem.trimRight(u8, t3, "." ++ @tagName(TARBALL_EXT));
+/// The string must be freed
+pub fn getInternalPath(self: Self, gpa: Allocator) ![]const u8 {
+    return try std.fmt.allocPrint(gpa, "{s}-{s}", .{ root.ARCH_NAME ++ "." ++ @tagName(builtin.os.tag), self.getVersion() });
 }
 
 /// Decompress the tarball into the specified directory and verifies the signature and (if specified) the hash.
@@ -110,4 +115,8 @@ pub fn decompress(self: Self, gpa: Allocator, prog_node: std.Progress.Node, dest
             },
         }
     }
+
+    const zig_dest_dir_path = try self.getInternalPath(gpa);
+    defer gpa.free(zig_dest_dir_path);
+    try dest_dir.rename(std.mem.trimRight(u8, self.getFileName(), "." ++ @tagName(TARBALL_EXT)), zig_dest_dir_path);
 }

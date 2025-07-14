@@ -18,12 +18,10 @@ pub fn execute(gpa: Allocator) !void {
     var iter = root.data_dir.zig_dir.iterate();
     while (try iter.next()) |v| {
         var split = std.mem.splitScalar(u8, v.name, '-');
-        _ = split.next(); // `zig`
-        const os = split.next().?;
-        const arch = split.next().?;
+        const os_info = split.next().?;
         const version = split.rest();
 
-        try stdout.print("  {s} ({s}-{s})", .{ version, arch, os });
+        try stdout.print("  {s} ({s})", .{ version, os_info });
 
         // Check if version is master or latest
         if (std.mem.eql(u8, mirror_index.versions.values()[0].version.?, version))

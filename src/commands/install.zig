@@ -118,9 +118,8 @@ fn getZigVersion(
     } else {
         is_nightly_build = true;
         return .{
-            .tarball = try allocPrint(gpa, "https://ziglang.org/builds/zig-{s}-{s}-{s}.{s}", .{
-                root.ARCH_NAME,
-                @tagName(builtin.os.tag),
+            .tarball = try allocPrint(gpa, "https://ziglang.org/builds/zig-{s}-{s}.{s}", .{
+                os_info,
                 version,
                 @tagName(ZigVersion.TARBALL_EXT),
             }),
@@ -137,8 +136,7 @@ pub fn execute(gpa: Allocator, positionals: *Positionals.Iterator) !void {
     else
         fatal("You need to specify a version", .{}, null);
 
-    const os_info = try allocPrint(gpa, "{s}-{s}", .{ root.ARCH_NAME, @tagName(builtin.os.tag) });
-    defer gpa.free(os_info);
+    const os_info = root.ARCH_NAME ++ "-" ++ @tagName(builtin.os.tag);
 
     const main_prog_node_name = if (eql(u8, user_version, "master"))
         try allocPrint(gpa, "Installing zig master ({s})", .{os_info})
@@ -164,10 +162,12 @@ pub fn execute(gpa: Allocator, positionals: *Positionals.Iterator) !void {
     if (!is_nightly_build and root.data_dir.config.check_hash)
         prog_node.increaseEstimatedTotalItems(1);
 
-    var tarball_dir_name = zig_ver.getFileName();
-    tarball_dir_name = tarball_dir_name[0 .. tarball_dir_name.len - 1 - @tagName(ZigVersion.TARBALL_EXT).len];
-    if (root.data_dir.zig_dir.statFile(tarball_dir_name) != error.FileNotFound)
-        fatal("This version already exist", .{}, null);
+    {
+        const zig_internal_path = try zig_ver.getInternalPath(gpa);
+        defer gpa.free(zig_internal_path);
+        if (root.data_dir.zig_dir.statFile(zig_internal_path) != error.FileNotFound)
+            fatal("This version already exist", .{}, null);
+    }
 
     try downloadZig(gpa, zig_ver);
 
@@ -177,7 +177,7 @@ pub fn execute(gpa: Allocator, positionals: *Positionals.Iterator) !void {
         \\
     , .{
         if (eql(u8, user_version, "."))
-            zig_ver.getVersion(os_info)
+            zig_ver.getVersion()
         else
             user_version,
         os_info,

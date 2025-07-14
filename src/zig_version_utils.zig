@@ -6,22 +6,17 @@ const Allocator = std.mem.Allocator;
 const root = @import("root");
 const fatal = root.fatal;
 
-fn getVersionFromBuildZon(gpa: Allocator, file: std.fs.File) ![]const u8 {
-    const stat = try file.stat();
-    const file_content = try file.readToEndAllocOptions(gpa, stat.size, stat.size, @alignOf(u8), 0);
-    defer gpa.free(file_content);
-
-    return (try std.zon.parse.fromSlice(struct { minimum_zig_version: []const u8 }, gpa, file_content, null, .{ .ignore_unknown_fields = true })).minimum_zig_version;
-}
-
-pub fn getVersionFromFile(
-    gpa: Allocator,
-) ![]const u8 {
+pub fn getVersionFromFile(gpa: Allocator) ![]const u8 {
     const cwd = std.fs.cwd();
 
     if (cwd.openFile("build.zig.zon", .{})) |file| {
         defer file.close();
-        return getVersionFromBuildZon(gpa, file);
+
+        const stat = try file.stat();
+        const file_content = try file.readToEndAllocOptions(gpa, stat.size, stat.size, @alignOf(u8), 0);
+        defer gpa.free(file_content);
+
+        return (try std.zon.parse.fromSlice(struct { minimum_zig_version: []const u8 }, gpa, file_content, null, .{ .ignore_unknown_fields = true })).minimum_zig_version;
     } else |e| switch (e) {
         error.FileNotFound => {},
         else => fatal("Failed to open `build.zig.zon`", .{}, e),
@@ -70,22 +65,16 @@ pub fn getVersionDirectory(gpa: Allocator, zig_dir: std.fs.Dir, version: []const
 }
 
 fn versionFromFolder(folder_name: []const u8) []const u8 {
-    // The folder name is in format `zig-{OS}-{ARCH}-{VERSION}`,
-    // so we need to trim `zig-{OS}-{ARCH}-`.
+    // The folder name is in format `{ARCH}.{OS}-{VERSION}`
     var split = std.mem.splitScalar(u8, folder_name, '-');
-    _ = split.next(); // `zig`
-    _ = split.next(); // os
-    _ = split.next(); // arch
-    const version = split.rest();
-
-    return version;
+    _ = split.next(); // {ARCH}.{OS}
+    return split.rest();
 }
 
 /// The string must be freed
 pub fn folderFromVersion(gpa: Allocator, version: []const u8) ![]const u8 {
-    return std.fmt.allocPrint(gpa, "zig-{s}-{s}-{s}", .{
-        @tagName(builtin.os.tag),
-        root.ARCH_NAME,
+    return std.fmt.allocPrint(gpa, "{s}-{s}", .{
+        root.ARCH_NAME ++ "." ++ @tagName(builtin.os.tag),
         version,
     });
 }

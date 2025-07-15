@@ -1,19 +1,19 @@
 const builtin = @import("builtin");
 const std = @import("std");
-const Allocator = std.mem.Allocator;
 
 const root = @import("root");
+const AppContext = @import("../AppContext.zig");
 
-pub fn execute(gpa: Allocator) !void {
+pub fn execute(ctx: *const AppContext) !void {
     const stdout = std.io.getStdOut().writer();
 
-    const current_zig = try root.getCurrentZigVersion(gpa, root.data_dir.bin_dir);
-    defer if (current_zig) |_| gpa.free(current_zig.?);
+    const current_zig = try root.getCurrentZigVersion(ctx.gpa, ctx.bin_dir);
+    defer if (current_zig) |_| ctx.gpa.free(current_zig.?);
 
-    var mirror_index = try root.getMirrorIndex(gpa, null);
+    var mirror_index = try root.getMirrorIndex(ctx.gpa, null);
 
     try stdout.print("List of installed zig version:\n", .{});
-    var iter = root.data_dir.zig_dir.iterate();
+    var iter = ctx.zig_dir.iterate();
     while (try iter.next()) |v| {
         var split = std.mem.splitScalar(u8, v.name, '-');
         const os_info = split.next().?;

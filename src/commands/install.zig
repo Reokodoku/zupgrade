@@ -13,6 +13,7 @@ const root = @import("root");
 const fatal = root.fatal;
 
 const version_utils = @import("../zig_version_utils.zig");
+const AppContext = @import("../AppContext.zig");
 const MirrorIndex = @import("../MirrorIndex.zig");
 const ZigVersion = @import("../ZigVersion.zig");
 
@@ -43,23 +44,23 @@ fn sendGetReq(url: []const u8) !std.http.Client.Request {
     return req;
 }
 
-fn downloadZig(gpa: Allocator, zig_ver: ZigVersion) !void {
+fn downloadZig(ctx: *const AppContext, zig_ver: ZigVersion) !void {
     var sign: minizign.Signature = undefined;
 
     {
         const get_signature_node = prog_node.start("Getting signature", 0);
         defer get_signature_node.end();
 
-        const minisign_url = try allocPrint(gpa, "{s}.minisig", .{zig_ver.tarball});
-        defer gpa.free(minisign_url);
+        const minisign_url = try allocPrint(ctx.gpa, "{s}.minisig", .{zig_ver.tarball});
+        defer ctx.gpa.free(minisign_url);
 
         var req = try sendGetReq(minisign_url);
         defer req.deinit();
 
-        const sign_data = try req.reader().readAllAlloc(gpa, std.heap.page_size_max * 4);
-        defer gpa.free(sign_data);
+        const sign_data = try req.reader().readAllAlloc(ctx.gpa, std.heap.page_size_max * 4);
+        defer ctx.gpa.free(sign_data);
 
-        sign = try minizign.Signature.decode(gpa, sign_data);
+        sign = try minizign.Signature.decode(ctx.gpa, sign_data);
     }
     defer sign.deinit();
 
@@ -69,12 +70,12 @@ fn downloadZig(gpa: Allocator, zig_ver: ZigVersion) !void {
     tarball_req_node.end();
 
     var hash: [Sha256.digest_length]u8 = undefined;
-    zig_ver.decompress(gpa, prog_node, root.data_dir.zig_dir, req.reader(), sign, if (is_nightly_build or !root.data_dir.config.check_hash) null else &hash) catch |e| switch (e) {
+    zig_ver.decompress(ctx.gpa, prog_node, ctx.zig_dir, req.reader(), sign, if (is_nightly_build or !ctx.config.check_hash) null else &hash) catch |e| switch (e) {
         ZigVersion.Error.SignatureVerificationFailed => fatal("Failed to verify the signature", .{}, null),
         ZigVersion.Error.DecompressionFailed => fatal("Failed to decompress the tarball", .{}, null),
         ZigVersion.Error.ChecksumFailed => {
-            const fmt_hash = try allocPrint(gpa, "{s}", .{std.fmt.fmtSliceHexLower(&hash)});
-            defer gpa.free(fmt_hash);
+            const fmt_hash = try allocPrint(ctx.gpa, "{s}", .{std.fmt.fmtSliceHexLower(&hash)});
+            defer ctx.gpa.free(fmt_hash);
 
             fatal(
                 \\Tarball hashes are not the same!
@@ -128,7 +129,7 @@ fn getZigVersion(
     }
 }
 
-pub fn execute(gpa: Allocator, positionals: *Positionals.Iterator) !void {
+pub fn execute(ctx: *const AppContext, positionals: *Positionals.Iterator) !void {
     const stdout = std.io.getStdOut().writer();
 
     const user_version = if (positionals.next()) |ver|
@@ -139,14 +140,14 @@ pub fn execute(gpa: Allocator, positionals: *Positionals.Iterator) !void {
     const os_info = root.ARCH_NAME ++ "-" ++ @tagName(builtin.os.tag);
 
     const main_prog_node_name = if (eql(u8, user_version, "master"))
-        try allocPrint(gpa, "Installing zig master ({s})", .{os_info})
+        try allocPrint(ctx.gpa, "Installing zig master ({s})", .{os_info})
     else if (eql(u8, user_version, "latest"))
-        try allocPrint(gpa, "Installing zig latest ({s})", .{os_info})
+        try allocPrint(ctx.gpa, "Installing zig latest ({s})", .{os_info})
     else if (eql(u8, user_version, "."))
-        try allocPrint(gpa, "Installing zig ({s})", .{os_info})
+        try allocPrint(ctx.gpa, "Installing zig ({s})", .{os_info})
     else
-        try allocPrint(gpa, "Installing zig-{s}-{s}", .{ os_info, user_version });
-    defer gpa.free(main_prog_node_name);
+        try allocPrint(ctx.gpa, "Installing zig-{s}-{s}", .{ os_info, user_version });
+    defer ctx.gpa.free(main_prog_node_name);
 
     prog_node = std.Progress.start(.{
         .root_name = main_prog_node_name,
@@ -155,21 +156,21 @@ pub fn execute(gpa: Allocator, positionals: *Positionals.Iterator) !void {
     });
     defer prog_node.end();
 
-    const zig_ver = try getZigVersion(gpa, try root.getMirrorIndex(gpa, prog_node), user_version, os_info);
-    defer if (is_nightly_build) gpa.free(zig_ver.tarball);
+    const zig_ver = try getZigVersion(ctx.gpa, try root.getMirrorIndex(ctx.gpa, prog_node), user_version, os_info);
+    defer if (is_nightly_build) ctx.gpa.free(zig_ver.tarball);
 
     // Add the "checksum" step if it's needed
-    if (!is_nightly_build and root.data_dir.config.check_hash)
+    if (!is_nightly_build and ctx.config.check_hash)
         prog_node.increaseEstimatedTotalItems(1);
 
     {
-        const zig_internal_path = try zig_ver.getInternalPath(gpa);
-        defer gpa.free(zig_internal_path);
-        if (root.data_dir.zig_dir.statFile(zig_internal_path) != error.FileNotFound)
+        const zig_internal_path = try zig_ver.getInternalPath(ctx.gpa);
+        defer ctx.gpa.free(zig_internal_path);
+        if (ctx.zig_dir.statFile(zig_internal_path) != error.FileNotFound)
             fatal("This version already exist", .{}, null);
     }
 
-    try downloadZig(gpa, zig_ver);
+    try downloadZig(ctx, zig_ver);
 
     try stdout.print(
         \\Successfully installed zig {0s} ({1s})

@@ -1,14 +1,14 @@
 const builtin = @import("builtin");
 const std = @import("std");
-const Allocator = std.mem.Allocator;
 
 const Positionals = @import("sap").Positionals;
 
-const version_utils = @import("../zig_version_utils.zig");
 const root = @import("root");
 const fatal = root.fatal;
+const version_utils = @import("../zig_version_utils.zig");
+const AppContext = @import("../AppContext.zig");
 
-pub fn execute(gpa: Allocator, positionals: *Positionals.Iterator) !void {
+pub fn execute(ctx: *const AppContext, positionals: *Positionals.Iterator) !void {
     const stdout = std.io.getStdOut().writer();
 
     const user_version = if (positionals.next()) |ver|
@@ -16,26 +16,26 @@ pub fn execute(gpa: Allocator, positionals: *Positionals.Iterator) !void {
     else
         fatal("You need to specify a version", .{}, null);
 
-    const version = if (try version_utils.getVersionDirectory(gpa, root.data_dir.zig_dir, user_version)) |dir|
+    const version = if (try version_utils.getVersionDirectory(ctx.gpa, ctx.zig_dir, user_version)) |dir|
         dir
     else
         fatal("This version isn't installed", .{}, null);
-    defer gpa.free(version);
+    defer ctx.gpa.free(version);
 
-    _ = root.data_dir.zig_dir.openDir(version, .{}) catch |e| switch (e) {
+    _ = ctx.zig_dir.openDir(version, .{}) catch |e| switch (e) {
         error.FileNotFound => fatal("This version isn't installed", .{}, null),
         else => return e,
     };
 
-    const current_zig = try root.getCurrentZigVersion(gpa, root.data_dir.bin_dir);
-    defer if (current_zig) |cur| gpa.free(cur);
+    const current_zig = try root.getCurrentZigVersion(ctx.gpa, ctx.bin_dir);
+    defer if (current_zig) |cur| ctx.gpa.free(cur);
 
     if (current_zig) |current| {
         if (std.mem.eql(u8, version, current))
-            try root.data_dir.bin_dir.deleteFile(if (builtin.os.tag == .windows) "zig.exe" else "zig");
+            try ctx.bin_dir.deleteFile(if (builtin.os.tag == .windows) "zig.exe" else "zig");
     }
 
-    try root.data_dir.zig_dir.deleteTree(version);
+    try ctx.zig_dir.deleteTree(version);
 
     var ver_split = std.mem.splitBackwardsScalar(u8, version, '-');
     try stdout.print("Uninstalled zig version {s}\n", .{ver_split.first()});

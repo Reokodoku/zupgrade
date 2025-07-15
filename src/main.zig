@@ -5,7 +5,7 @@ const eql = std.mem.eql;
 const sap = @import("sap");
 const KnownFolderConfig = @import("known-folders").KnownFolderConfig;
 
-const DataDir = @import("DataDir.zig");
+const AppContext = @import("AppContext.zig");
 const MirrorIndex = @import("MirrorIndex.zig");
 
 const install = @import("commands/install.zig");
@@ -20,7 +20,6 @@ else
 
 const VERSION = "0.1.0";
 
-pub var data_dir: DataDir = undefined;
 pub var http_client: std.http.Client = undefined;
 
 fn usage(exe_name: []const u8) noreturn {
@@ -129,8 +128,8 @@ pub fn main() !void {
     var positionals = args.positionals.iterator();
     const cmd = positionals.next();
 
-    data_dir = try DataDir.init(gpa, args.executable_name);
-    defer data_dir.deinit();
+    var ctx = try AppContext.init(gpa, args.executable_name);
+    defer ctx.deinit();
 
     http_client = .{ .allocator = gpa };
     defer http_client.deinit();
@@ -145,22 +144,22 @@ pub fn main() !void {
             if (args.help)
                 std.debug.print(install.HELP_MESSAGE, .{})
             else
-                try install.execute(gpa, &positionals);
+                try install.execute(&ctx, &positionals);
         } else if (eql(u8, c, "uninstall") or eql(u8, c, "rm")) {
             if (args.help)
                 std.debug.print(uninstall.HELP_MESSAGE, .{})
             else
-                try uninstall.execute(gpa, &positionals);
+                try uninstall.execute(&ctx, &positionals);
         } else if (eql(u8, c, "list") or eql(u8, c, "ls")) {
             if (args.help)
                 std.debug.print(list.HELP_MESSAGE, .{})
             else
-                try list.execute(gpa);
+                try list.execute(&ctx);
         } else if (eql(u8, c, "use") or eql(u8, c, "switch")) {
             if (args.help)
                 std.debug.print(use.HELP_MESSAGE, .{})
             else
-                try use.execute(gpa, &positionals);
+                try use.execute(&ctx, &positionals);
         } else {
             usage(args.executable_name);
         }

@@ -6,7 +6,7 @@ const Config = @import("Config.zig");
 const Self = @This();
 
 gpa: std.mem.Allocator,
-path: []const u8,
+data_path: []const u8,
 config: Config,
 
 bin_dir: std.fs.Dir,
@@ -79,7 +79,7 @@ pub fn init(gpa: std.mem.Allocator, exe_name: []const u8) !Self {
 
     return .{
         .gpa = gpa,
-        .path = data_dir_path,
+        .data_path = data_dir_path,
         .config = config,
 
         .bin_dir = try data_dir.openDir("bin", .{}),
@@ -89,7 +89,7 @@ pub fn init(gpa: std.mem.Allocator, exe_name: []const u8) !Self {
 }
 
 pub fn deinit(self: *Self) void {
-    self.gpa.free(self.path);
+    self.gpa.free(self.data_path);
 
     self.bin_dir.close();
     self.zig_dir.close();

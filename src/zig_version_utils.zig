@@ -25,15 +25,13 @@ pub fn getVersionFromFile(gpa: Allocator) ![]const u8 {
     fatal("No file found to get the version!", .{}, null);
 }
 
-/// The returned string and `real_version` must be freed
-pub fn getVersionDirectory(gpa: Allocator, zig_dir: std.fs.Dir, version: []const u8, real_version: *?[]const u8) !?[]const u8 {
+/// The returned string must be freed
+pub fn getVersionDirectory(gpa: Allocator, zig_dir: std.fs.Dir, version: []const u8) !?[]const u8 {
     if (eql(u8, version, ".")) {
         const version_from_file = try getVersionFromFile(gpa);
         defer gpa.free(version_from_file);
 
-        real_version.* = try gpa.dupe(u8, version_from_file);
-
-        return getVersionDirectory(gpa, zig_dir, version_from_file, real_version);
+        return getVersionDirectory(gpa, zig_dir, version_from_file);
     }
 
     if (eql(u8, version, "latest") or eql(u8, version, "master")) {
@@ -43,15 +41,10 @@ pub fn getVersionDirectory(gpa: Allocator, zig_dir: std.fs.Dir, version: []const
 
         var mirror_index = try root.getMirrorIndex(gpa, null);
 
-        if (real_version.* != null)
-            gpa.free(real_version.*.?);
-
-        real_version.* = try gpa.dupe(u8, if (eql(u8, version, "master"))
+        return try folderFromVersion(gpa, if (eql(u8, version, "master"))
             mirror_index.versions.values()[0].version.?
         else
             mirror_index.versions.keys()[1]);
-
-        return try folderFromVersion(gpa, real_version.*.?);
     }
 
     var iter = zig_dir.iterate();

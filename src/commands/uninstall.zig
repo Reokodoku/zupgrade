@@ -1,3 +1,4 @@
+const builtin = @import("builtin");
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
@@ -10,51 +11,34 @@ const fatal = root.fatal;
 pub fn execute(gpa: Allocator, positionals: *Positionals.Iterator) !void {
     const stdout = std.io.getStdOut().writer();
 
-    const version = if (positionals.next()) |ver|
+    const user_version = if (positionals.next()) |ver|
         ver
     else
         fatal("You need to specify a version", .{}, null);
 
-    var real_version: ?[]const u8 = null;
-    const directory = if (try version_utils.getVersionDirectory(gpa, root.data_dir.zig_dir, version, &real_version)) |dir|
+    const version = if (try version_utils.getVersionDirectory(gpa, root.data_dir.zig_dir, user_version)) |dir|
         dir
     else
         fatal("This version isn't installed", .{}, null);
-    defer if (real_version != null) gpa.free(real_version.?);
-    defer gpa.free(directory);
+    defer gpa.free(version);
 
-    _ = root.data_dir.zig_dir.openDir(directory, .{}) catch |e| switch (e) {
+    _ = root.data_dir.zig_dir.openDir(version, .{}) catch |e| switch (e) {
         error.FileNotFound => fatal("This version isn't installed", .{}, null),
         else => return e,
     };
 
-    var read_link_buffer = std.mem.zeroes([(24 + 12) + 20]u8);
-    const current_zig = root.data_dir.bin_dir.readLink("zig", &read_link_buffer) catch |e| switch (e) {
-        error.FileNotFound => null,
-        else => return e,
-    };
+    const current_zig = try root.getCurrentZigVersion(gpa, root.data_dir.bin_dir);
+    defer if (current_zig) |cur| gpa.free(cur);
 
     if (current_zig) |current| {
-        var path = std.mem.splitBackwardsScalar(u8, current, std.fs.path.sep);
-        _ = path.next(); // `zig` exe
-
-        const current_zig_path = path.next().?;
-        const zig_path = if (real_version) |ver|
-            try version_utils.folderFromVersion(gpa, ver)
-        else
-            try version_utils.folderFromVersion(gpa, version);
-        defer gpa.free(zig_path);
-
-        if (std.mem.eql(u8, current_zig_path, zig_path))
-            try root.data_dir.bin_dir.deleteFile("zig");
+        if (std.mem.eql(u8, version, current))
+            try root.data_dir.bin_dir.deleteFile(if (builtin.os.tag == .windows) "zig.exe" else "zig");
     }
 
-    try root.data_dir.zig_dir.deleteTree(directory);
+    try root.data_dir.zig_dir.deleteTree(version);
 
-    if (real_version) |ver|
-        try stdout.print("Uninstalled zig version {s}\n", .{ver})
-    else
-        try stdout.print("Uninstalled zig version {s}\n", .{version});
+    var ver_split = std.mem.splitBackwardsScalar(u8, version, '-');
+    try stdout.print("Uninstalled zig version {s}\n", .{ver_split.first()});
 }
 
 pub const HELP_MESSAGE =

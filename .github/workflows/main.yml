@@ -25,4 +25,12 @@ jobs:
       - uses: mlugg/setup-zig@v2
         with:
           version: latest
-      - run: zig fmt --check .
+      - name: Install clang-format
+        run: sudo apt-get update && sudo apt-get install -y clang-format
+      - name: Lint
+        run: |
+          # Zig
+          zig fmt --check .
+          # C and H files
+          find . -regex '.*\.\(c\|h\)' -exec clang-format -style=file -i {} +
+          git diff --exit-code

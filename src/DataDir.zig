@@ -5,6 +5,8 @@ const Config = @import("Config.zig");
 
 const Self = @This();
 
+gpa: std.mem.Allocator,
+path: []const u8,
 config: Config,
 
 bin_dir: std.fs.Dir,
@@ -14,26 +16,26 @@ tools_dir: std.fs.Dir,
 pub fn init(gpa: std.mem.Allocator, exe_name: []const u8) !Self {
     var data_dir_created = false;
 
-    var data_dir: std.fs.Dir = blk: {
-        const path = std.process.getEnvVarOwned(gpa, "ZUPGRADE_DATA_DIR") catch |e| switch (e) {
+    const data_dir_path: []const u8 = blk: {
+        break :blk std.process.getEnvVarOwned(gpa, "ZUPGRADE_DATA_DIR") catch |e| switch (e) {
             error.EnvironmentVariableNotFound => {
-                var home = try known_folders.open(gpa, .home, .{}) orelse @panic("Error when opening home dir");
-                defer home.close();
-
-                _ = home.statFile(".zupgrade") catch |er| switch (er) {
-                    error.FileNotFound => {
-                        try home.makeDir(".zupgrade");
-                        data_dir_created = true;
-                    },
-                    else => return er,
-                };
-
-                break :blk try home.openDir(".zupgrade", .{});
+                const home = try known_folders.getPath(gpa, .home) orelse @panic("Error when opening home dir");
+                defer gpa.free(home);
+                break :blk try std.fs.path.join(gpa, &.{ home, ".zupgrade" });
             },
             else => return e,
         };
-        defer gpa.free(path);
-        break :blk try std.fs.cwd().openDir(path, .{});
+    };
+
+    var data_dir: std.fs.Dir = blk: {
+        break :blk std.fs.cwd().openDir(data_dir_path, .{}) catch |e| switch (e) {
+            error.FileNotFound => {
+                try std.fs.makeDirAbsolute(data_dir_path);
+                data_dir_created = true;
+                break :blk try std.fs.openDirAbsolute(data_dir_path, .{});
+            },
+            else => return e,
+        };
     };
     defer data_dir.close();
 
@@ -42,7 +44,7 @@ pub fn init(gpa: std.mem.Allocator, exe_name: []const u8) !Self {
         "zig",
         "tools",
     }) |dir| {
-        _ = data_dir.statFile(dir) catch |e| switch (e) {
+        _ = data_dir.openDir(dir, .{}) catch |e| switch (e) {
             error.FileNotFound => try data_dir.makeDir(dir),
             else => return e,
         };
@@ -63,27 +65,23 @@ pub fn init(gpa: std.mem.Allocator, exe_name: []const u8) !Self {
     };
 
     if (data_dir_created) {
-        const stdout = std.io.getStdOut().writer();
-        const path = try std.fs.path.join(gpa, &[_][]const u8{
-            (try known_folders.getPath(gpa, .home)).?,
-            ".zupgrade",
-            "bin",
-        });
-        defer gpa.free(path);
-        try stdout.print(
+        try std.io.getStdOut().writer().print(
             \\You have successfully installed zupgrade!
             \\
             \\To be able to use zupgrade, you must put in your `PATH` env
-            \\{s}
+            \\{s}{c}bin
             \\
             \\Then to get started you can execute `{s} --help`!
             \\
-        , .{ path, exe_name });
+        , .{ data_dir_path, std.fs.path.sep, exe_name });
         std.process.exit(0);
     }
 
     return .{
+        .gpa = gpa,
+        .path = data_dir_path,
         .config = config,
+
         .bin_dir = try data_dir.openDir("bin", .{}),
         .zig_dir = try data_dir.openDir("zig", .{ .iterate = true }),
         .tools_dir = try data_dir.openDir("tools", .{}),
@@ -91,6 +89,8 @@ pub fn init(gpa: std.mem.Allocator, exe_name: []const u8) !Self {
 }
 
 pub fn deinit(self: *Self) void {
+    self.gpa.free(self.path);
+
     self.bin_dir.close();
     self.zig_dir.close();
     self.tools_dir.close();

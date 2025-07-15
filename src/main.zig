@@ -87,6 +87,32 @@ pub fn getMirrorIndex(gpa: std.mem.Allocator, prog_node: ?std.Progress.Node) !*c
     return &mirror_index.?.value;
 }
 
+pub fn getCurrentZigVersion(gpa: std.mem.Allocator, bin_dir: std.fs.Dir) !?[]const u8 {
+    if (builtin.os.tag == .windows) {
+        const current_zig_version = bin_dir.openFile("current_zig_version", .{}) catch |e| switch (e) {
+            error.FileNotFound => return null,
+            else => return e,
+        };
+        defer current_zig_version.close();
+
+        return try current_zig_version.readToEndAlloc(gpa, std.heap.page_size_min);
+    } else {
+        const buffer = try gpa.alloc(u8, (24 + 12) + 20);
+        defer gpa.free(buffer);
+        const link = bin_dir.readLink("zig", buffer) catch |e| switch (e) {
+            error.FileNotFound => {
+                gpa.free(buffer);
+                return null;
+            },
+            else => return e,
+        };
+
+        var path = std.mem.splitBackwardsScalar(u8, link, std.fs.path.sep);
+        _ = path.next(); // `zig` exe
+        return try gpa.dupe(u8, path.next().?);
+    }
+}
+
 pub fn main() !void {
     var gpa_state = std.heap.GeneralPurposeAllocator(.{}){};
     defer if (gpa_state.deinit() == .leak) @panic("MEMORY LEAK DETECTED");

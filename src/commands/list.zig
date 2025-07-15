@@ -1,3 +1,4 @@
+const builtin = @import("builtin");
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
@@ -6,11 +7,8 @@ const root = @import("root");
 pub fn execute(gpa: Allocator) !void {
     const stdout = std.io.getStdOut().writer();
 
-    var read_link_buffer = std.mem.zeroes([(24 + 12) + 20]u8);
-    const current_zig = root.data_dir.bin_dir.readLink("zig", &read_link_buffer) catch |e| switch (e) {
-        error.FileNotFound => null,
-        else => return e,
-    };
+    const current_zig = try root.getCurrentZigVersion(gpa, root.data_dir.bin_dir);
+    defer if (current_zig) |_| gpa.free(current_zig.?);
 
     var mirror_index = try root.getMirrorIndex(gpa, null);
 
@@ -30,10 +28,7 @@ pub fn execute(gpa: Allocator) !void {
             try stdout.writeAll(" [latest]");
 
         if (current_zig) |current| {
-            var path = std.mem.splitBackwardsScalar(u8, current, std.fs.path.sep);
-            _ = path.next(); // `zig` exe
-
-            if (std.mem.eql(u8, v.name, path.next().?))
+            if (std.mem.eql(u8, v.name, current))
                 try stdout.writeAll(" **CURRENT**");
         }
 

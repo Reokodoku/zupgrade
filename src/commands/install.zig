@@ -103,11 +103,11 @@ fn getZigVersion(
     } else if (eql(u8, user_version, ".")) {
         prog_node.increaseEstimatedTotalItems(1);
         const node = prog_node.start("Parsing zig version from file", 0);
-        defer node.end();
 
         const ver = try version_utils.getVersionFromFile(gpa);
         defer gpa.free(ver);
 
+        node.end();
         return getZigVersion(gpa, mirror_index, ver, os_info);
     }
 

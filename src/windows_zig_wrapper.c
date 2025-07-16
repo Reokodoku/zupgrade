@@ -11,10 +11,10 @@
 
 char *read_zig_version()
 {
-	FILE *zig_version_fd = fopen(ZUPGRADE_PATH "\\bin\\current_zig_version", "r");
+	FILE *zig_version_fd = fopen(ZUPGRADE_PATH "\\zig\\selected", "r");
 	if (!zig_version_fd)
 	{
-		fprintf(stderr, "Cannot open " ZUPGRADE_PATH "\\bin\\current_zig_version");
+		fprintf(stderr, "Cannot open " ZUPGRADE_PATH "\\zig\\selected");
 		exit(EXIT_FAILURE);
 	}
 

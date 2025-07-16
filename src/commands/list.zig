@@ -7,7 +7,7 @@ const AppContext = @import("../AppContext.zig");
 pub fn execute(ctx: *const AppContext) !void {
     const stdout = std.io.getStdOut().writer();
 
-    const current_zig = try root.getCurrentZigVersion(ctx.gpa, ctx.bin_dir);
+    const current_zig = try root.getCurrentZigVersion(ctx.gpa, ctx.zig_dir);
     defer if (current_zig) |_| ctx.gpa.free(current_zig.?);
 
     var mirror_index = try root.getMirrorIndex(ctx.gpa, null);
@@ -15,6 +15,9 @@ pub fn execute(ctx: *const AppContext) !void {
     try stdout.print("List of installed zig version:\n", .{});
     var iter = ctx.zig_dir.iterate();
     while (try iter.next()) |v| {
+        if (v.kind != .directory)
+            continue;
+
         var split = std.mem.splitScalar(u8, v.name, '-');
         const os_info = split.next().?;
         const version = split.rest();

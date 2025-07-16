@@ -27,7 +27,7 @@ pub fn execute(ctx: *const AppContext, positionals: *Positionals.Iterator) !void
         else => return e,
     };
 
-    const current_zig = try root.getCurrentZigVersion(ctx.gpa, ctx.bin_dir);
+    const current_zig = try root.getCurrentZigVersion(ctx.gpa, ctx.zig_dir);
     defer if (current_zig) |cur| ctx.gpa.free(cur);
 
     if (current_zig) |current| {

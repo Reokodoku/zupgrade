@@ -73,15 +73,17 @@ pub fn execute(ctx: *const AppContext, positionals: *Positionals.Iterator) !void
     };
     defer zig_dir.close();
 
-    if (builtin.os.tag == .windows) {
-        const current_zig_version = ctx.bin_dir.openFile("current_zig_version", .{ .mode = .write_only }) catch |e| switch (e) {
-            error.FileNotFound => try ctx.bin_dir.createFile("current_zig_version", .{}),
+    {
+        const current_zig_version = ctx.zig_dir.openFile("selected", .{ .mode = .write_only }) catch |e| switch (e) {
+            error.FileNotFound => try ctx.zig_dir.createFile("selected", .{}),
             else => return e,
         };
         defer current_zig_version.close();
 
         try current_zig_version.writeAll(version);
+    }
 
+    if (builtin.os.tag == .windows) {
         _ = ctx.bin_dir.statFile("zig.exe") catch |e| switch (e) {
             error.FileNotFound => {
                 const zig_exe = try zig_dir.realpathAlloc(ctx.gpa, "zig.exe");

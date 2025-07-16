@@ -31,8 +31,10 @@ pub fn execute(ctx: *const AppContext, positionals: *Positionals.Iterator) !void
     defer if (current_zig) |cur| ctx.gpa.free(cur);
 
     if (current_zig) |current| {
-        if (std.mem.eql(u8, version, current))
+        if (std.mem.eql(u8, version, current)) {
+            try ctx.zig_dir.deleteFile("selected");
             try ctx.bin_dir.deleteFile(if (builtin.os.tag == .windows) "zig.exe" else "zig");
+        }
     }
 
     try ctx.zig_dir.deleteTree(version);

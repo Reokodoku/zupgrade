@@ -99,7 +99,7 @@ fn getZigVersion(
     var version = user_version;
 
     if (eql(u8, user_version, "latest")) {
-        version = try gpa.dupe(u8, mirror_index.versions.keys()[1]);
+        version = mirror_index.versions.keys()[1];
     } else if (eql(u8, user_version, ".")) {
         prog_node.increaseEstimatedTotalItems(1);
         const node = prog_node.start("Parsing zig version from file", 0);
